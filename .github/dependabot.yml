@@ -1,0 +1,50 @@
+version: 2
+updates:
+  # Go sidecar
+  - package-ecosystem: "gomod"
+    directory: "/sidecar"
+    schedule:
+      interval: "weekly"
+    groups:
+      sidecar-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Python engines
+  - package-ecosystem: "pip"
+    directory: "/engines"
+    schedule:
+      interval: "weekly"
+    groups:
+      engines-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Python filter plugin
+  - package-ecosystem: "pip"
+    directory: "/filter_plugin"
+    schedule:
+      interval: "weekly"
+    groups:
+      filter-plugin-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
