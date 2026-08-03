@@ -4,6 +4,14 @@
 
 This is a **SearXNG sidecar** that enables SSO-based per-user engine authentication. It sits in front of SearXNG, handles user authentication via an identity provider, resolves per-user search engine credentials, and injects them into search requests before forwarding to SearXNG.
 
+### Languages
+
+| Component | Language | Runtime |
+|-----------|----------|---------|
+| **Sidecar** | Go | None (single static binary) |
+| **Filter Plugin** | Python | SearXNG runtime |
+| **Custom Engines** | Python | SearXNG runtime |
+
 ### Architecture
 
 ```
@@ -89,92 +97,95 @@ def search(request, params):
 
 ## Tech Stack
 
-- **Runtime:** Node.js (TypeScript)
-- **HTTP Framework:** Fastify (preferred for performance and schema validation)
-- **Authentication:** OIDC (primary), with pluggable SAML/LDAP backends
-- **Sessions:** Secure cookie-based sessions
-- **Testing:** Vitest
-- **Build:** tsup or ts-node for dev
+- **Sidecar:** Go (single static binary, no runtime dependencies)
+- **HTTP:** `net/http` standard library
+- **Authentication:** `golang.org/x/oauth2` for OIDC, pluggable SAML/LDAP backends
+- **Sessions:** Secure cookie-based sessions (`golang.org/x/crypto`)
+- **Testing:** `testing` standard library, `httptest` for HTTP tests
+- **Build:** `go build` → single binary
 - **Container:** Docker (multi-stage build)
 
 ## Conventions
 
-### Code Style
-- TypeScript with strict mode enabled
-- ESLint + Prettier (config in `.eslintrc.cjs` / `.prettierrc`)
-- 2-space indentation, single quotes, semicolons
-- Named exports preferred over default exports
-- Function-first declarations (not hoisted)
+### Go Code Style
+- Follow [Effective Go](https://go.dev/doc/effective_go) and [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments)
+- Use `gofmt` and `go vet`
+- 4-space indentation (tabs)
+- Package names: short, lowercase, no underscores
+- Error handling: explicit error returns, never panic in production code
 
 ### File Naming
-- Source files: `kebab-case.ts` (e.g., `auth-handler.ts`)
-- Test files: `<source-file>.test.ts` colocated alongside source
-- Config: `config.ts` (single source of truth, loaded from env + config file)
+- Source files: `snake_case.go` (e.g., `auth_handler.go`)
+- Test files: `<source-file>_test.go` colocated alongside source
+- Config: `config.go` (single source of truth, loaded from env + config file)
 
-### Module Structure (`src/`)
+### Sidecar Module Structure (`sidecar/`)
 
 ```
-src/
-├── auth/
-│   ├── index.ts              # Auth module barrel
-│   ├── handler.ts            # Fastify request handlers
-│   ├── oidc.ts               # OIDC provider implementation
-│   ├── session.ts            # Session creation/validation
-│   └── types.ts              # Shared auth types
-├── engines/
-│   ├── resolver.ts           # Resolves engine secrets for a user
-│   ├── injector.ts           # Builds X-Authenticated-Engines-Secrets header
-│   └── types.ts              # Engine config types
-├── proxy/
-│   ├── server.ts             # Fastify server setup
-│   └── middleware/           # Rate limiting, logging, etc.
-├── config/
-│   ├── index.ts              # Load and validate config
-│   └── schema.ts             # Zod/Yup validation schema
-├── app.ts                    # Entry point
-└── index.ts                  # Named export for testing
+sidecar/
+├── cmd/
+│   └── sidecar/
+│       └── main.go             # Entry point
+├── internal/
+│   ├── auth/
+│   │   ├── handler.go          # HTTP request handlers
+│   │   ├── oidc.go             # OIDC provider implementation
+│   │   ├── session.go          # Session creation/validation
+│   │   └── types.go            # Shared auth types
+│   ├── engines/
+│   │   ├── resolver.go         # Resolves engine secrets for a user
+│   │   ├── injector.go         # Builds X-Authenticated-Engines-Secrets header
+│   │   └── types.go            # Engine config types
+│   ├── proxy/
+│   │   ├── server.go           # HTTP server setup
+│   │   └── middleware.go       # Rate limiting, logging, etc.
+│   └── config/
+│       ├── config.go           # Load and validate config
+│       └── schema.go           # Env var validation
+├── pkg/
+│   └── errors/                 # Public error types
+└── go.mod
 ```
 
 ### Error Handling
-- Use custom error classes in `src/errors/` (e.g., `AuthError`, `ConfigError`)
+- Use custom error types in `pkg/errors/` (e.g., `AuthError`, `ConfigError`)
 - Never leak internal details to clients; return generic messages with codes
 - Log at appropriate levels; include correlation IDs for request tracing
+- Use `errors.Is()` and `errors.As()` for error comparison
 
 ### Testing
 - Each public function should have unit tests
 - Integration tests use a mock SSO server and a real SearXNG container
-- Test files import from `src/`, never from `dist/`
+- Use `net/http/httptest` for HTTP handler tests
 
 ## Common Tasks
 
 ### Adding a New SSO Provider
-1. Implement the provider interface in `src/auth/` (e.g., `saml.ts`).
-2. Export it from `src/auth/index.ts`.
-3. Add provider-specific config to `src/config/schema.ts`.
-4. Add tests in `src/auth/<provider>.test.ts`.
+1. Implement the provider interface in `internal/auth/` (e.g., `saml.go`).
+2. Add provider-specific config to `internal/config/config.go`.
+3. Add tests in `internal/auth/<provider>_test.go`.
 
 ### Adding a New Authenticated Engine
-1. Define engine metadata in `src/engines/types.ts`.
-2. Add secret resolution logic in `src/engines/resolver.ts`.
-3. Add SearXNG custom engine code (in a companion SearXNG fork or plugin repo).
+1. Define engine metadata in `internal/engines/types.go`.
+2. Add secret resolution logic in `internal/engines/resolver.go`.
+3. Add SearXNG custom engine code in `engines/` (Python).
 4. Add SearXNG plugin entry in the engine config mapping.
-5. Add tests in `src/engines/<engine>.test.ts`.
+5. Add tests in `internal/engines/<engine>_test.go`.
 
 ### Adding a New Non-Authenticated Engine
 Standard SearXNG engines work as-is — no sidecar changes needed. Just enable in SearXNG config.
 
 ### Configuration Changes
-- All env vars are validated against the schema in `src/config/schema.ts`.
-- Defaults are set in the schema; don't use `||` fallbacks in business logic.
+- All env vars are validated in `internal/config/config.go`.
 - Document new env vars in `README.md` configuration reference.
 
 ## Running Locally
 
 ```bash
-npm install
-npm run dev          # Starts sidecar on :8080, proxies to default SearXNG
-npm test             # Runs test suite
-npm run lint         # Lint and format
+cd sidecar
+go mod tidy
+go run ./cmd/sidecar    # Starts sidecar on :8080, proxies to default SearXNG
+go test ./...            # Runs test suite
 ```
 
 ## Docker

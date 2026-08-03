@@ -2,6 +2,14 @@
 
 A sidecar application for [SearXNG](https://github.com/searxng/searxng) that enables **SSO-based per-user engine authentication**.
 
+## Languages
+
+| Component | Language | Runtime |
+|-----------|----------|---------|
+| **Sidecar** | Go | None (single static binary) |
+| **Filter Plugin** | Python | SearXNG runtime |
+| **Custom Engines** | Python | SearXNG runtime |
+
 ## Overview
 
 SearXNG instances often rely on third-party search engines (Google, Bing, YouTube, etc.) that require individual API keys or authentication tokens. This sidecar sits between the user's browser and the SearXNG instance, intercepting search requests and injecting per-user engine credentials via SSO — eliminating the need for each user to manually configure API keys.
@@ -125,12 +133,12 @@ services:
     ports:
       - "8888:8080"
     volumes:
-      - ./searxng-plugins:/etc/searxng/searx/plugins  # Auth plugin
+      - ./filter_plugin:/etc/searxng/searx/plugins  # Auth plugin
     networks:
       - searxng
 
   sidecar:
-    build: .
+    build: ./sidecar
     ports:
       - "8080:8080"
     environment:
@@ -193,32 +201,56 @@ Create `engines.json` to map users/groups to engine credentials:
 
 ## Development
 
+### Sidecar (Go)
+
 ```bash
 # Install dependencies
-npm install
+cd sidecar
+go mod tidy
 
 # Run in development mode
-npm run dev
+go run ./cmd/sidecar
 
 # Run tests
-npm test
+go test ./...
 
-# Build Docker image
-docker build -t searxng-sidecar-auth .
+# Build static binary
+go build -o sidecar ./cmd/sidecar
+```
+
+### Filter Plugin & Engines (Python)
+
+```bash
+# Install dependencies (if needed)
+pip install -r filter_plugin/requirements.txt
+
+# Test plugin (requires SearXNG runtime)
+pytest filter_plugin/
 ```
 
 ## Project Structure
 
 ```
 .
-├── src/                  # Application source code
-│   ├── auth/             # SSO/authentication modules
-│   ├── engines/          # Engine secret resolution & injection
-│   ├── proxy/            # Reverse proxy logic
-│   └── config/           # Configuration loading
-├── searxng-plugins/      # SearXNG plugin for secret filtering
-├── tests/                # Test suite
-├── docker-compose.yml    # Example deployment
+├── sidecar/                  # Go sidecar application
+│   ├── cmd/
+│   │   └── sidecar/
+│   │       └── main.go       # Entry point
+│   ├── internal/
+│   │   ├── auth/             # SSO/authentication modules
+│   │   ├── engines/          # Engine secret resolution & injection
+│   │   ├── proxy/            # Reverse proxy logic
+│   │   └── config/           # Configuration loading
+│   ├── pkg/
+│   │   └── errors/           # Public error types
+│   └── go.mod
+├── engines/                  # Custom SearXNG engines (Python)
+│   └── netbox.py
+├── filter_plugin/            # SearXNG plugin for secret filtering (Python)
+│   └── searx/
+│       └── plugins/
+│           └── auth_secrets.py
+├── docker-compose.yml        # Example deployment
 └── README.md
 ```
 
