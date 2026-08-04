@@ -185,8 +185,8 @@ sidecar/
 ### Adding a New Authenticated Engine
 1. Define engine metadata in `internal/engines/types.go`.
 2. Add secret resolution logic in `internal/engines/resolver.go`.
-3. Add SearXNG custom engine code in `engines/` (Python) that reads `X-User-Token-{engine}` header.
-4. Add tests in `internal/engines/<engine>_test.go`.
+3. Add SearXNG custom engine code in `engines/` (Python) that reads `X-Authenticated-Engine-{engine}` header. See [Engine Implementation Guide](docs/engine_implementation.md) for detailed instructions.
+4. Add tests in `internal/engines/<engine>_test.go` and engine tests in `engines/tests/`.
 
 ### Adding a New Non-Authenticated Engine
 Standard SearXNG engines work as-is — no sidecar changes needed. Just enable in SearXNG config.
