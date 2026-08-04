@@ -16,19 +16,28 @@ SearXNG instances often rely on third-party search engines (Google, Bing, YouTub
 
 ### How It Works
 
-```
-┌──────────┐      ┌──────────────────────┐      ┌──────────┐      ┌──────────┐
-│  Browser  │─────▶│  Auth Sidecar (this)  │─────▶│ SearXNG  │─────▶│  Engine   │
-│           │      │  (SSO + secrets)      │      │ + plugin │      │ (NetBox,  │
-│           │      │                      │      │          │      │  Bing..)  │
-└──────────┘      └──────────────────────┘      └──────────┘      └──────────┘
-                         │                            │
-                         ▼                            ▼
-                  ┌──────────────┐             ┌──────────────┐
-                  │   Identity   │             │ Engine API   │
-                  │    Provider  │             │ (with user   │
-                  │              │             │  token)      │
-                  └──────────────┘             └──────────────┘
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant Sidecar
+    participant SearXNG
+    participant Engine
+    participant IdP
+
+    Note over Browser,IdP: Authentication Flow
+    Browser->>Sidecar: GET /
+    Sidecar->>IdP: Redirect to OIDC login
+    IdP-->>Sidecar: Callback with code
+    Sidecar-->>Browser: Session cookie + redirect to SearXNG
+
+    Note over Browser,Engine: Search Flow
+    Browser->>Sidecar: GET /search?q=test
+    Sidecar->>Sidecar: Resolve engine secrets
+    Sidecar->>SearXNG: /search?q=test<br/>X-Authenticated-Engine-NetBox: {"token": "nb_tok"}
+    SearXNG->>Engine: /api/devices/<br/>Authorization: Token nb_tok
+    Engine-->>SearXNG: Results
+    SearXNG-->>Sidecar: Results
+    Sidecar-->>Browser: Results
 ```
 
 **The sidecar owns identity. SearXNG is anonymous.**
