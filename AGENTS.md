@@ -181,6 +181,7 @@ sidecar/
 1. Implement the provider interface in `internal/auth/` (e.g., `saml.go`).
 2. Add provider-specific config to `internal/config/config.go`.
 3. Add tests in `internal/auth/<provider>_test.go`.
+4. See [Sidecar Implementation Guide](docs/sidecar_implementation.md) for OIDC details.
 
 ### Adding a New Authenticated Engine
 1. Define engine metadata in `internal/engines/types.go`.
