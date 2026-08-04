@@ -7,8 +7,8 @@ A sidecar application for [SearXNG](https://github.com/searxng/searxng) that ena
 | Component | Language | Runtime |
 |-----------|----------|---------|
 | **Sidecar** | Go | None (single static binary) |
-| **Filter Plugin** | Python | SearXNG runtime |
 | **Custom Engines** | Python | SearXNG runtime |
+| **Filter Plugin** (optional) | Python | SearXNG runtime |
 
 ## Overview
 
@@ -37,17 +37,26 @@ SearXNG instances often rely on third-party search engines (Google, Bing, YouTub
 2. The sidecar intercepts unauthenticated requests and redirects to the configured SSO provider (OIDC, SAML, LDAP, etc.).
 3. After successful authentication, the sidecar issues a session cookie and resolves the user's engine credentials from a backend store.
 4. On each search request, the user's browser sends the session cookie to the sidecar.
-5. The sidecar uses the session to identify the user, resolves all per-engine secrets, and proxies the request to SearXNG — sending them in a single header:
+5. The sidecar uses the session to identify the user, resolves per-engine secrets, and proxies the request to SearXNG — sending one header per engine:
    ```
-   X-Authenticated-Engines-Secrets: {"netbox": "nb_tok_abc", "bing": "bing_key_xyz"}
+   X-User-Token-NetBox: nb_tok_abc
+   X-User-Token-Bing: bing_key_xyz
    ```
-6. A SearXNG plugin intercepts the request and, for each engine call, extracts only the secret matching that engine's name (e.g., `secrets["netbox"]` for the NetBox engine).
-7. The custom engine reads its own secret and uses it to authenticate with the upstream API.
-8. The authenticated response flows back through Engine → SearXNG → sidecar → user transparently.
+6. Each custom engine reads its own header in its `request()` function and uses it to authenticate with the upstream API.
+7. The authenticated response flows back through Engine → SearXNG → sidecar → user transparently.
 
-The sidecar is the **correlation point**: it knows who the user is (via session/API key), resolves the right credentials, and forwards them to SearXNG. SearXNG has no concept of user identity — it only sees engine-scoped secrets filtered by the plugin.
+The sidecar is the **correlation point**: it knows who the user is (via session/API key), resolves the right credentials, and forwards them to SearXNG. SearXNG has no concept of user identity — it only sees engine-scoped tokens.
 
 **No token is ever issued directly to downstream applications.** The sidecar remains the trust boundary; all engine authentication happens server-side between the sidecar and SearXNG.
+
+### Optional Filter Plugin
+
+A SearXNG plugin can be added later as a **security improvement** to:
+- Validate the `X-User-Token-*` headers format
+- Log which engines are being accessed per user
+- Add rate limiting per user
+
+This is optional because each custom engine already reads only its own header. The plugin adds defense-in-depth for sensitive deployments.
 
 ## Features
 
@@ -56,8 +65,9 @@ The sidecar is the **correlation point**: it knows who the user is (via session/
 - **Transparent Proxy** — Users experience SearXNG as usual; secret injection is invisible.
 - **Session Management** — Secure session cookies with configurable expiration.
 - **Multi-Engine Support** — Configurable mapping of users/groups to specific engines and secrets.
-- **Plugin-Based Secret Filtering** — SearXNG plugin ensures each engine only sees its own secret.
+- **Per-Engine Headers** — Each engine receives only its own `X-User-Token-*` header.
 - **Rate Limiting** — Per-user rate limiting to protect backend API quotas.
+- **Optional Plugin** — Defense-in-depth plugin for validation, logging, and rate limiting (future).
 
 ## Architecture
 
@@ -67,52 +77,40 @@ Authenticated engines require coordination on **both** sides:
 
 | Side | Responsibility |
 |------|---------------|
-| **SearXNG** | Custom engine or plugin that reads the filtered secret and uses it to authenticate with the upstream API |
+| **SearXNG** | Custom engine that reads its own `X-User-Token-{engine}` header and uses it to authenticate with the upstream API |
 | **Sidecar** | Configuration mapping each engine to its secret resolution mechanism (config file, vault, etc.) |
 
-For most engines that need per-user auth (NetBox, private Bing, custom APIs), the standard SearXNG engine doesn't exist or doesn't support authentication. So you're writing custom engines anyway — the plugin just handles the secret distribution cleanly.
+For most engines that need per-user auth (NetBox, private Bing, custom APIs), the standard SearXNG engine doesn't exist or doesn't support authentication. So you're writing custom engines anyway.
 
-### Plugin Architecture: `X-Authenticated-Engines-Secrets`
+### Per-Engine Header Injection
 
-The sidecar sends a single header containing all user secrets as a JSON dictionary:
+The sidecar sends one header per engine:
 
 ```
-X-Authenticated-Engines-Secrets: {"netbox": "nb_tok_abc", "bing": "bing_key_xyz"}
+X-User-Token-NetBox: nb_tok_abc
+X-User-Token-Bing: bing_key_xyz
 ```
 
-The SearXNG plugin filters this per engine:
+Each custom engine reads its own header in the `request()` function:
 
 ```python
-# searx/plugins/auth_secrets.py
-def on_request(engine_name, params, headers):
-    secrets = json.loads(headers.get('X-Authenticated-Engines-Secrets', '{}'))
-    secret = secrets.get(engine_name)
-    if secret:
-        headers[f'X-Engine-Secret-{engine_name}'] = secret
-    return headers
-```
-
-The custom engine reads only its own secret:
-
-```python
-# searx/engines/netbox.py
-def search(request, params):
-    secret = request.headers.get('X-Engine-Secret-netbox')
-    if not secret:
-        return error("Missing NetBox authentication")
-    response = requests.get('https://netbox.example.com/api/',
-                           headers={'Authorization': f'Token {secret}'})
-    return parse_results(response.json())
+# searx/engines/authenticated_netbox.py
+def request(query, params):
+    token = params['headers'].get('X-User-Token-NetBox')
+    if not token:
+        raise Exception("Missing NetBox authentication")
+    params['headers']['Authorization'] = f'Token {token}'
+    return params
 ```
 
 ### Security Considerations
 
-- **HTTP headers are global to the request** — standard engines could theoretically read all secrets.
+- **HTTP headers are global to the request** — standard engines could theoretically read all tokens.
 - **Mitigations:**
   - Short-lived tokens (5-15 min) with narrow scopes (search-only).
-  - The plugin only exposes the matching engine's secret.
+  - Each engine only reads its own header.
   - Standard engines (DuckDuckGo, Wikipedia) don't look for auth headers.
-  - Custom engines you write only read their own secret.
+  - Custom engines you write only read their own token.
 - **Trust boundary:** SearXNG is not a security boundary — it trusts its engines. For highly sensitive engines, consider bypassing SearXNG and having the sidecar call the engine directly.
 - **Risk is low in practice:** Typical deployments are private (home labs, club administration, company networks).
 
@@ -121,7 +119,7 @@ def search(request, params):
 ### Prerequisites
 
 - Docker / Docker Compose
-- A running SearXNG instance (with the auth plugin installed)
+- A running SearXNG instance
 - An SSO identity provider (Keycloak, Authentik, Okta, etc.)
 
 ### Using Docker Compose
@@ -132,8 +130,6 @@ services:
     image: searxng/searxng:latest
     ports:
       - "8888:8080"
-    volumes:
-      - ./filter_plugin:/etc/searxng/searx/plugins  # Auth plugin
     networks:
       - searxng
 
@@ -218,13 +214,15 @@ go test ./...
 go build -o sidecar ./cmd/sidecar
 ```
 
-### Filter Plugin & Engines (Python)
+### Engines & Filter Plugin (Python)
 
 ```bash
 # Install dependencies (if needed)
+pip install -r engines/requirements.txt
 pip install -r filter_plugin/requirements.txt
 
-# Test plugin (requires SearXNG runtime)
+# Run tests
+pytest engines/
 pytest filter_plugin/
 ```
 
@@ -245,8 +243,8 @@ pytest filter_plugin/
 │   │   └── errors/           # Public error types
 │   └── go.mod
 ├── engines/                  # Custom SearXNG engines (Python)
-│   └── netbox.py
-├── filter_plugin/            # SearXNG plugin for secret filtering (Python)
+│   └── authenticated_netbox.py
+├── filter_plugin/            # Optional SearXNG plugin (defense-in-depth)
 │   └── searx/
 │       └── plugins/
 │           └── auth_secrets.py
