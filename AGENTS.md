@@ -35,13 +35,15 @@ This is a **SearXNG sidecar** that enables SSO-based per-user engine authenticat
 2. The sidecar issues a session cookie identifying the user.
 3. Every search request the user makes goes through the sidecar.
 4. The sidecar resolves the user's per-engine credentials.
-5. The sidecar proxies the request to SearXNG, sending per-engine secrets as separate headers:
-   `X-User-Token-NetBox: nb_tok_abc`
-   `X-User-Token-Bing: bing_key_xyz`
-6. Each custom engine reads its own header in its `request()` function and uses it to authenticate with the upstream API.
+5. The sidecar proxies the request to SearXNG, sending per-engine secrets as separate headers with JSON payloads:
+   ```
+   X-Authenticated-Engine-NetBox: {"token": "nb_tok_abc"}
+   X-Authenticated-Engine-Bing: {"token": "bing_key_xyz"}
+   ```
+6. Each custom engine reads its own header in its `request()` function, parses the JSON payload, and uses it to authenticate with the upstream API.
 7. Results flow back: Engine → SearXNG → Sidecar → User.
 
-The sidecar is the **correlation point**: it knows who the user is (via session/API key), resolves the right credentials, and forwards them to SearXNG. SearXNG itself has no concept of user identity — it only sees engine-scoped tokens.
+The sidecar is the **correlation point**: it knows who the user is (via session/API key), resolves the right credentials, and forwards them to SearXNG. SearXNG itself has no concept of user identity — it only sees engine-scoped secrets.
 
 **No token is ever issued directly to downstream applications.** The sidecar remains the trust boundary; all engine authentication happens server-side between the sidecar and SearXNG.
 
@@ -67,11 +69,24 @@ For most engines that need per-user auth (NetBox, private Bing, custom APIs), th
 
 ### Per-Engine Header Injection
 
-The sidecar sends one header per engine:
+The sidecar sends one header per engine with a JSON payload:
 
 ```
-X-User-Token-NetBox: nb_tok_abc
-X-User-Token-Bing: bing_key_xyz
+X-Authenticated-Engine-NetBox: {"token": "nb_tok_abc"}
+X-Authenticated-Engine-Bing: {"token": "bing_key_xyz"}
+```
+
+The payload structure supports different authentication schemes:
+
+```json
+// Simple token
+{"token": "nb_tok_abc"}
+
+// Bearer token
+{"bearer": "eyJhbGciOiJIUzI1NiJ9..."}
+
+// API key in query param
+{"api_key": "key123", "location": "query"}
 ```
 
 Each custom engine reads its own header in the `request()` function:
@@ -79,18 +94,23 @@ Each custom engine reads its own header in the `request()` function:
 ```python
 # searx/engines/authenticated_netbox.py
 def request(query, params):
-    token = params['headers'].get('X-User-Token-NetBox')
-    if not token:
+    import json
+    header = params['headers'].get('X-Authenticated-Engine-NetBox')
+    if not header:
         raise Exception("Missing NetBox authentication")
-    params['headers']['Authorization'] = f'Token {token}'
+    
+    auth = json.loads(header)
+    if auth.get('type') == 'token':
+        params['headers']['Authorization'] = f'Token {auth["token"]}'
+    
     return params
 ```
 
 **Security considerations:**
-- HTTP headers are global to the request — standard engines could theoretically read all tokens
+- HTTP headers are global to the request — standard engines could theoretically read all secrets
 - **Mitigation:** Short-lived tokens (5-15 min), narrowly scoped (search-only), and each engine only reads its own header
 - **Trust boundary:** SearXNG is not a security boundary — it trusts its engines. For highly sensitive engines, consider bypassing SearXNG and having the sidecar call the engine directly
-- **Risk is low in practice:** Standard engines (DuckDuckGo, Wikipedia) don't look for auth headers; custom engines you write only read their own token
+- **Risk is low in practice:** Standard engines (DuckDuckGo, Wikipedia) don't look for auth headers; custom engines you write only read their own secret
 
 ## Tech Stack
 
