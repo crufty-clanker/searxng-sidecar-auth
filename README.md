@@ -18,17 +18,21 @@ SearXNG instances often rely on third-party search engines (Google, Bing, YouTub
 
 ```mermaid
 sequenceDiagram
+    participant Data Silos
+    participant Engine
+    participant SearXNG
     participant Browser
     participant Sidecar
-    participant SearXNG
-    participant Engine
     participant IdP
 
     Note over Browser,IdP: Authentication Flow
     Browser->>Sidecar: GET /
     Sidecar->>IdP: Redirect to OIDC login
     IdP-->>Sidecar: Callback with code
-    Sidecar-->>Browser: Session cookie + redirect to SearXNG
+    Sidecar-->>Browser: Session cookie + redirect to /search (proxy to SearXNG)
+
+    Sidecar->Data Silos: Create short-lived tokens or other scoped credential if none exsistant or expired
+    Data Silos-->Sidecar: Store credentials per user
 
     Note over Browser,Engine: Search Flow
     Browser->>Sidecar: GET /search?q=test
@@ -61,7 +65,7 @@ The sidecar is the **correlation point**: it knows who the user is (via session/
 ### Optional Filter Plugin
 
 A SearXNG plugin can be added later as a **security improvement** to:
-- Validate the `X-User-Token-*` headers format
+- Validate the `X-Authenticated-Engine-*` headers format
 - Log which engines are being accessed per user
 - Add rate limiting per user
 
@@ -74,7 +78,7 @@ This is optional because each custom engine already reads only its own header. T
 - **Transparent Proxy** — Users experience SearXNG as usual; secret injection is invisible.
 - **Session Management** — Secure session cookies with configurable expiration.
 - **Multi-Engine Support** — Configurable mapping of users/groups to specific engines and secrets.
-- **Per-Engine Headers** — Each engine receives only its own `X-User-Token-*` header.
+- **Per-Engine Headers** — Each engine receives only its own `X-Authenticated-Engine-*` header.
 - **Rate Limiting** — Per-user rate limiting to protect backend API quotas.
 - **Optional Plugin** — Defense-in-depth plugin for validation, logging, and rate limiting (future).
 
@@ -86,7 +90,7 @@ Authenticated engines require coordination on **both** sides:
 
 | Side | Responsibility |
 |------|---------------|
-| **SearXNG** | Custom engine that reads its own `X-User-Token-{engine}` header and uses it to authenticate with the upstream API |
+| **SearXNG** | Custom engine that reads its own `X-Authenticated-Engine-{engine}` header and uses it to authenticate with the upstream API |
 | **Sidecar** | Configuration mapping each engine to its secret resolution mechanism (config file, vault, etc.) |
 
 For most engines that need per-user auth (NetBox, private Bing, custom APIs), the standard SearXNG engine doesn't exist or doesn't support authentication. So you're writing custom engines anyway.

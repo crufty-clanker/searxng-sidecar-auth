@@ -50,7 +50,7 @@ The sidecar is the **correlation point**: it knows who the user is (via session/
 ### Optional Filter Plugin
 
 A SearXNG plugin can be added later as a **security improvement** to:
-- Validate the `X-User-Token-*` headers format
+- Validate the `X-Authenticated-Engine-*` headers format
 - Log which engines are being accessed per user
 - Add rate limiting per user
 
@@ -62,7 +62,7 @@ Authenticated engines require coordination on **both** sides:
 
 | Side | Responsibility |
 |------|---------------|
-| **SearXNG** | Custom engine that reads its own `X-User-Token-{engine}` header and uses it to authenticate with the upstream API |
+| **SearXNG** | Custom engine that reads its own `X-Authenticated-Engine-{engine}` header and uses it to authenticate with the upstream API |
 | **Sidecar** | Configuration mapping each engine to its secret resolution mechanism (config file, vault, etc.) |
 
 For most engines that need per-user auth (NetBox, private Bing, custom APIs), the standard SearXNG engine doesn't exist or doesn't support authentication. So you're writing custom engines anyway.
@@ -217,5 +217,5 @@ docker run -p 8080:8080 --env-file .env searxng-sidecar-auth
 - **Do not** store engine secrets in session data; resolve them per-request from the config backend.
 - **Do** ensure all secrets come from environment variables or mounted files, never from config committed to git.
 - **Do** issue short-lived tokens (5-15 min) with narrow scopes (search-only).
-- **Do** strip the `X-User-Token-*` headers from responses to prevent leakage.
+- **Do** strip the `X-Authenticated-Engine-*` headers from responses to prevent leakage.
 - **Optional:** A SearXNG plugin can be added later for validation, logging, or rate limiting (defense-in-depth).
