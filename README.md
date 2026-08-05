@@ -2,6 +2,10 @@
 
 A sidecar application for [SearXNG](https://github.com/searxng/searxng) that enables **SSO-based per-user engine authentication**.
 
+## Implications
+
+As the sidecar applications hands users serets to the configured SearXNG instance, you have to use a self-hosted instance which is under your control only.
+
 ## Languages
 
 | Component | Language | Runtime |
@@ -12,39 +16,69 @@ A sidecar application for [SearXNG](https://github.com/searxng/searxng) that ena
 
 ## Overview
 
-SearXNG instances often rely on third-party search engines (Google, Bing, YouTube, etc.) that require individual API keys or authentication tokens. This sidecar sits between the user's browser and the SearXNG instance, intercepting search requests and injecting per-user engine credentials via SSO — eliminating the need for each user to manually configure API keys.
+SearXNG instances may rely on search engines that require individual API keys or authentication tokens (e.g. NetBox, private Git hosting, internal documentation). This sidecar sits between the user's browser and the SearXNG instance, intercepting search requests and injecting per-user engine credentials — eliminating the need for each user to manually configure API keys and keeping concerns separated.
+
+```mermaid
+architecture-beta
+    group search[internal search]
+    group services[internal services]
+
+    service user(user)[User]
+    service sidecar(server)[Sidecar] in search
+    service searx(database)[SearXNG] in search
+    service infra(server)[Infra Docs] in services
+    service wiki(server)[Internal Docs] in services
+    service contact(database)[Contacts] in services
+    
+    user:R -- L:sidecar
+    sidecar:R -- L:searx
+    searx:R -- L:infra
+    searx:R -- L:contact
+    searx:R -- L:wiki
+```
 
 ### How It Works
 
+There are two steps: Login and Search
+
+#### Login
+
 ```mermaid
 sequenceDiagram
-    participant Data Silos
-    participant Engine
-    participant SearXNG
-    participant Browser
-    participant Sidecar
+    participant Browser@{"type": "actor"}
     participant IdP
+    participant Sidecar
+    participant DATA@{"type": "collections"} AS Data Silos
 
-    Note over Browser,IdP: Authentication Flow
     Browser->>Sidecar: GET /
-    Sidecar->>IdP: Redirect to OIDC login
-    IdP-->>Sidecar: Callback with code
-    Sidecar-->>Browser: Session cookie + redirect to /search (proxy to SearXNG)
-
-    Sidecar->Data Silos: Create short-lived tokens or other scoped credential if none exsistant or expired
-    Data Silos-->Sidecar: Store credentials per user
-
-    Note over Browser,Engine: Search Flow
-    Browser->>Sidecar: GET /search?q=test
-    Sidecar->>Sidecar: Resolve engine secrets
-    Sidecar->>SearXNG: /search?q=test<br/>X-Authenticated-Engine-NetBox: {"token": "nb_tok"}
-    SearXNG->>Engine: /api/devices/<br/>Authorization: Token nb_tok
-    Engine-->>SearXNG: Results
-    SearXNG-->>Sidecar: Results
-    Sidecar-->>Browser: Results
+    Sidecar->>+IdP: Redirect to OIDC login
+    Browser->>IdP: Sign in
+    IdP-->>-Sidecar: Callback with code
+    Sidecar-->>Browser: Session cookie
+    Sidecar<<->>DATA: Create short-lived scoped credentials
 ```
 
-**The sidecar owns identity. SearXNG is anonymous.**
+After the sidecar created and stored all credentials, it can pass them to the engines of SearXNG using an HTTP header.
+
+#### Search
+
+```mermaid
+sequenceDiagram
+    participant Browser@{"type": "actor"}
+    participant Sidecar
+    participant SearXNG AS SearXNG (Engines)
+    participant DATA@{"type": "collections"} AS Data Silos
+
+    Browser->>+Sidecar: GET /?q=test
+    Sidecar->>Sidecar: Resolve engine secrets
+    Sidecar->>+SearXNG: /search?q=test<br/>X-Authenticated-Engine-NetBox: {"token": "nb_tok"}
+    SearXNG->>DATA: /api/devices/<br/>Authorization: Token nb_tok
+    DATA-->>SearXNG: Results
+    SearXNG-->>-Sidecar: Results
+    Sidecar-->>-Browser: Results
+```
+
+**The sidecar owns identity. SearXNG is stateless.**
 
 1. User navigates to the SearXNG instance behind the sidecar.
 2. The sidecar intercepts unauthenticated requests and redirects to the configured SSO provider (OIDC, SAML, LDAP, etc.).
